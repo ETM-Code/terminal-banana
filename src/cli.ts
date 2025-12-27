@@ -18,6 +18,7 @@ import {
   extractTransparencyFromImage,
   TransparentMethod,
   ImageType,
+  BackgroundColor,
 } from './alpha.js';
 import { Model, AspectRatio, ImageSize, ImageConfig } from './gemini.js';
 
@@ -64,10 +65,12 @@ Options:
   -o <dir>              Output directory (required for all generation commands)
   -i <image>            Input image path (required for edit commands)
   -r <image>            Reference image (can be used multiple times, up to 14 for pro)
-  --method <m>          Transparency method: pro-pro (default), pro-flash, flash-flash
+  --method <m>          Transparency method: pro-pro (default), pro-flash, flash-flash, local
   --model <m>           Model: nano-banana-pro (default), nano-banana
   --resolution <r>      Image size: 1K (default), 2K, 4K (pro only)
   --aspect-ratio <ar>   Aspect ratio: 1:1 (default), 16:9, 9:16, 4:3, 3:4, etc.
+  --bg-color <c>        Background color for local method: white, black, auto, #hex (default: auto)
+  --tolerance <n>       Color tolerance for local method: 0-255 (default: 30)
 
 Output: JSON for easy parsing`);
 }
@@ -81,6 +84,8 @@ interface ParsedArgs {
   resolution?: ImageSize;
   aspectRatio?: AspectRatio;
   referenceImages?: string[];
+  bgColor?: BackgroundColor;
+  tolerance?: number;
 }
 
 const VALID_ASPECT_RATIOS: AspectRatio[] = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
@@ -102,8 +107,15 @@ function parseArgs(args: string[]): ParsedArgs {
       refImages.push(args[++i]);
     } else if (arg === '--method' && args[i + 1]) {
       const method = args[++i];
-      if (method === 'pro-pro' || method === 'pro-flash' || method === 'flash-flash') {
+      if (method === 'pro-pro' || method === 'pro-flash' || method === 'flash-flash' || method === 'local') {
         result.method = method;
+      }
+    } else if (arg === '--bg-color' && args[i + 1]) {
+      result.bgColor = args[++i] as BackgroundColor;
+    } else if (arg === '--tolerance' && args[i + 1]) {
+      const tol = parseInt(args[++i], 10);
+      if (!isNaN(tol) && tol >= 0 && tol <= 255) {
+        result.tolerance = tol;
       }
     } else if (arg === '--model' && args[i + 1]) {
       const model = args[++i];
@@ -270,6 +282,8 @@ async function handleEditTransparent(args: string[]): Promise<void> {
   const result = await extractTransparencyFromImage(inputImage, outputDir, {
     method: parsed.method,
     imageConfig: buildImageConfig(parsed),
+    bgColor: parsed.bgColor,
+    tolerance: parsed.tolerance,
   });
 
   printJson(result);

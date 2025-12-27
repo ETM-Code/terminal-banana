@@ -138,17 +138,32 @@ terminal-banana generate -o ./output --resolution 4K --aspect-ratio 21:9 "epic p
 
 ## Transparency Methods
 
-The tool uses a difference matting technique to extract alpha channels:
+### API Methods (difference matting)
+Uses AI to generate white/black background versions, then calculates transparency:
 
-1. Generate/edit image on white background
-2. Edit to black background
-3. Compare pixels to calculate transparency
+| Method | Generation | Editing | Quality | Speed | Cost |
+|--------|------------|---------|---------|-------|------|
+| `pro-pro` | Pro | Pro | Best | Slowest | $$$ |
+| `pro-flash` | Pro | Flash | Good | Medium | $$ |
+| `flash-flash` | Flash | Flash | Adequate | Fast | $ |
 
-| Method | Generation | Editing | Quality | Speed |
-|--------|------------|---------|---------|-------|
-| `pro-pro` | Pro | Pro | Best | Slowest |
-| `pro-flash` | Pro | Flash | Good | Medium |
-| `flash-flash` | Flash | Flash | Adequate | Fastest |
+### Local Method (no API calls)
+Simple color-based removal - **free** but only works well for solid color backgrounds:
+
+```bash
+# Auto-detect background color from corners
+terminal-banana edit-transparent -o ./out -i ./image.png --method local
+
+# Specify background color
+terminal-banana edit-transparent -o ./out -i ./image.png --method local --bg-color white
+terminal-banana edit-transparent -o ./out -i ./image.png --method local --bg-color "#00ff00"
+
+# Adjust tolerance (0-255, default 30)
+terminal-banana edit-transparent -o ./out -i ./image.png --method local --tolerance 50
+```
+
+**When to use local:** Simple solid backgrounds (white, black, green screen)
+**When to use API:** Complex backgrounds, gradients, shadows, fine edges
 
 ## Config Commands
 

@@ -16,7 +16,7 @@ import {
   wrapUIPrompt,
 } from './prompts.js';
 
-export type TransparentMethod = 'pro-pro' | 'pro-flash' | 'flash-flash';
+export type TransparentMethod = 'pro-pro' | 'pro-flash' | 'flash-flash' | 'local';
 
 export type ImageType = 'image' | 'icon' | 'logo' | 'ui';
 
@@ -34,6 +34,9 @@ function getModelsForMethod(method: TransparentMethod): { generate: Model; edit:
       return { generate: 'nano-banana-pro', edit: 'nano-banana' };
     case 'flash-flash':
       return { generate: 'nano-banana', edit: 'nano-banana' };
+    case 'local':
+      // Local method doesn't use API, but return defaults for type safety
+      return { generate: 'nano-banana', edit: 'nano-banana' };
   }
 }
 
@@ -48,6 +51,104 @@ function wrapPromptForType(prompt: string, type: ImageType): string {
     default:
       return prompt;
   }
+}
+
+export type BackgroundColor = 'white' | 'black' | 'auto' | string; // string for hex like '#00ff00'
+
+function parseColor(color: string): { r: number; g: number; b: number } {
+  if (color === 'white') return { r: 255, g: 255, b: 255 };
+  if (color === 'black') return { r: 0, g: 0, b: 0 };
+  // Parse hex color
+  const hex = color.replace('#', '');
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16),
+  };
+}
+
+/**
+ * Local background removal using color similarity
+ * No API calls - works well for solid color backgrounds
+ */
+export async function removeBackgroundLocal(
+  inputPath: string,
+  outputPath: string,
+  options: {
+    bgColor?: BackgroundColor;
+    tolerance?: number; // 0-255, default 30
+  } = {}
+): Promise<void> {
+  const tolerance = options.tolerance ?? 30;
+
+  const { data, info } = await sharp(inputPath)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  // Auto-detect background color from corners if not specified
+  let bgColor: { r: number; g: number; b: number };
+  if (!options.bgColor || options.bgColor === 'auto') {
+    // Sample corners to detect background
+    const corners = [
+      0, // top-left
+      (info.width - 1) * 4, // top-right
+      (info.height - 1) * info.width * 4, // bottom-left
+      ((info.height - 1) * info.width + (info.width - 1)) * 4, // bottom-right
+    ];
+    let rSum = 0, gSum = 0, bSum = 0;
+    for (const offset of corners) {
+      rSum += data[offset];
+      gSum += data[offset + 1];
+      bSum += data[offset + 2];
+    }
+    bgColor = {
+      r: Math.round(rSum / 4),
+      g: Math.round(gSum / 4),
+      b: Math.round(bSum / 4),
+    };
+  } else {
+    bgColor = parseColor(options.bgColor);
+  }
+
+  const outputBuffer = Buffer.alloc(data.length);
+
+  for (let i = 0; i < info.width * info.height; i++) {
+    const offset = i * 4;
+    const r = data[offset];
+    const g = data[offset + 1];
+    const b = data[offset + 2];
+
+    // Calculate color distance from background
+    const dist = Math.sqrt(
+      Math.pow(r - bgColor.r, 2) +
+      Math.pow(g - bgColor.g, 2) +
+      Math.pow(b - bgColor.b, 2)
+    );
+
+    // Calculate alpha based on distance from background color
+    // Pixels similar to background become transparent
+    let alpha: number;
+    if (dist <= tolerance) {
+      alpha = 0; // Fully transparent
+    } else if (dist <= tolerance * 2) {
+      // Gradual fade for anti-aliasing
+      alpha = (dist - tolerance) / tolerance;
+    } else {
+      alpha = 1; // Fully opaque
+    }
+
+    outputBuffer[offset] = r;
+    outputBuffer[offset + 1] = g;
+    outputBuffer[offset + 2] = b;
+    outputBuffer[offset + 3] = Math.round(alpha * 255);
+  }
+
+  await sharp(outputBuffer, {
+    raw: { width: info.width, height: info.height, channels: 4 },
+  })
+    .png()
+    .toFile(outputPath);
 }
 
 /**
@@ -204,6 +305,14 @@ export interface ExtractTransparencyResult {
   input: string;
 }
 
+export interface LocalTransparencyResult {
+  path: string;
+  method: 'local';
+  input: string;
+  bgColor: string;
+  tolerance: number;
+}
+
 /**
  * Extract transparency from an existing image (background removal)
  */
@@ -214,10 +323,11 @@ export async function extractTransparencyFromImage(
     method?: TransparentMethod;
     filename?: string;
     imageConfig?: ImageConfig;
+    bgColor?: BackgroundColor;
+    tolerance?: number;
   } = {}
-): Promise<ExtractTransparencyResult> {
+): Promise<ExtractTransparencyResult | LocalTransparencyResult> {
   const method = options.method || 'pro-pro';
-  const { edit: editModel } = getModelsForMethod(method);
 
   if (!existsSync(inputPath)) {
     throw new Error(`Input file not found: ${inputPath}`);
@@ -225,6 +335,29 @@ export async function extractTransparencyFromImage(
 
   ensureDir(outputDir);
 
+  // Handle local method (no API calls)
+  if (method === 'local') {
+    const timestamp = Date.now();
+    const inputName = basename(inputPath, '.png').replace(/\.[^.]+$/, '');
+    const filename = options.filename || `${inputName}_transparent_${timestamp}.png`;
+    const outputPath = resolve(join(outputDir, filename));
+
+    const bgColor = options.bgColor || 'auto';
+    const tolerance = options.tolerance ?? 30;
+
+    await removeBackgroundLocal(inputPath, outputPath, { bgColor, tolerance });
+
+    return {
+      path: outputPath,
+      method: 'local',
+      input: resolve(inputPath),
+      bgColor: bgColor,
+      tolerance,
+    };
+  }
+
+  // API-based methods
+  const { edit: editModel } = getModelsForMethod(method);
   const inputBuffer = readFileSync(inputPath);
   const timestamp = Date.now();
 
