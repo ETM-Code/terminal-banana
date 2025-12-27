@@ -4,6 +4,9 @@
  * terminal-banana CLI - Image generation using Nano Banana (Gemini Image) APIs
  */
 
+import { exec } from 'child_process';
+import { platform } from 'os';
+import * as readline from 'readline';
 import {
   loadConfig,
   saveConfig,
@@ -24,6 +27,58 @@ import { Model, AspectRatio, ImageSize, ImageConfig } from './gemini.js';
 
 function printJson(data: unknown): void {
   console.log(JSON.stringify(data, null, 2));
+}
+
+function openFile(filePath: string): void {
+  const plat = platform();
+  const cmd = plat === 'darwin' ? 'open' : plat === 'win32' ? 'start' : 'xdg-open';
+  exec(`${cmd} "${filePath}"`);
+}
+
+// Estimated costs per image (approximate, based on public pricing)
+const COST_ESTIMATES = {
+  'nano-banana': { generation: 0.02, edit: 0.02 },      // Flash ~$0.02/image
+  'nano-banana-pro': { generation: 0.05, edit: 0.05 }, // Pro ~$0.05/image
+};
+
+interface CostEstimate {
+  model: string;
+  operations: string[];
+  estimatedCost: string;
+  note: string;
+}
+
+function estimateCost(
+  model: Model,
+  operations: ('generation' | 'edit')[]
+): CostEstimate {
+  const costs = COST_ESTIMATES[model];
+  let total = 0;
+  for (const op of operations) {
+    total += costs[op];
+  }
+  return {
+    model,
+    operations,
+    estimatedCost: `~$${total.toFixed(3)}`,
+    note: 'Estimates based on public pricing. Actual costs may vary.',
+  };
+}
+
+async function confirmCost(estimate: CostEstimate): Promise<boolean> {
+  console.log(JSON.stringify(estimate, null, 2));
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    rl.question('Proceed? (y/n): ', (answer) => {
+      rl.close();
+      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+    });
+  });
 }
 
 function printError(message: string): never {
@@ -71,6 +126,9 @@ Options:
   --aspect-ratio <ar>   Aspect ratio: 1:1 (default), 16:9, 9:16, 4:3, 3:4, etc.
   --bg-color <c>        Background color for local method: white, black, auto, #hex (default: auto)
   --tolerance <n>       Color tolerance for local method: 0-255 (default: 30)
+  --name <filename>     Custom output filename (without extension)
+  --open                Open generated image in default viewer
+  --cost                Show estimated cost before generating (requires confirmation)
 
 Output: JSON for easy parsing`);
 }
@@ -86,6 +144,9 @@ interface ParsedArgs {
   referenceImages?: string[];
   bgColor?: BackgroundColor;
   tolerance?: number;
+  name?: string;
+  open?: boolean;
+  showCost?: boolean;
 }
 
 const VALID_ASPECT_RATIOS: AspectRatio[] = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
@@ -132,6 +193,12 @@ function parseArgs(args: string[]): ParsedArgs {
       if (VALID_ASPECT_RATIOS.includes(ar)) {
         result.aspectRatio = ar;
       }
+    } else if (arg === '--name' && args[i + 1]) {
+      result.name = args[++i];
+    } else if (arg === '--open') {
+      result.open = true;
+    } else if (arg === '--cost') {
+      result.showCost = true;
     } else if (!arg.startsWith('-')) {
       promptParts.push(arg);
     }
@@ -227,6 +294,17 @@ async function handleGenerate(
   const parsed = parseArgs(args);
   const outputDir = requireOutputDir(parsed);
   const prompt = requirePrompt(parsed);
+  const model = parsed.model || 'nano-banana-pro';
+
+  // Cost estimation
+  if (parsed.showCost) {
+    const estimate = estimateCost(model, ['generation']);
+    const confirmed = await confirmCost(estimate);
+    if (!confirmed) {
+      printJson({ cancelled: true });
+      return;
+    }
+  }
 
   // Load reference images if provided
   const referenceImages = parsed.referenceImages
@@ -234,13 +312,18 @@ async function handleGenerate(
     : undefined;
 
   const result = await generate(prompt, outputDir, {
-    model: parsed.model,
+    model,
     type,
     imageConfig: buildImageConfig(parsed),
     referenceImages,
+    filename: parsed.name ? `${parsed.name}.png` : undefined,
   });
 
   printJson(result);
+
+  if (parsed.open) {
+    openFile(result.path);
+  }
 }
 
 async function handleEdit(args: string[]): Promise<void> {
@@ -248,13 +331,29 @@ async function handleEdit(args: string[]): Promise<void> {
   const outputDir = requireOutputDir(parsed);
   const inputImage = requireInputImage(parsed);
   const prompt = requirePrompt(parsed);
+  const model = parsed.model || 'nano-banana-pro';
+
+  // Cost estimation
+  if (parsed.showCost) {
+    const estimate = estimateCost(model, ['edit']);
+    const confirmed = await confirmCost(estimate);
+    if (!confirmed) {
+      printJson({ cancelled: true });
+      return;
+    }
+  }
 
   const result = await edit(inputImage, prompt, outputDir, {
-    model: parsed.model,
+    model,
     imageConfig: buildImageConfig(parsed),
+    filename: parsed.name ? `${parsed.name}.png` : undefined,
   });
 
   printJson(result);
+
+  if (parsed.open) {
+    openFile(result.path);
+  }
 }
 
 async function handleTransparent(
@@ -264,29 +363,77 @@ async function handleTransparent(
   const parsed = parseArgs(args);
   const outputDir = requireOutputDir(parsed);
   const prompt = requirePrompt(parsed);
+  const method = parsed.method || 'pro-pro';
+
+  // Cost estimation (generation + edit for transparency)
+  if (parsed.showCost) {
+    const genModel = method === 'flash-flash' ? 'nano-banana' : 'nano-banana-pro';
+    const editModel = method === 'pro-pro' ? 'nano-banana-pro' : 'nano-banana';
+    const genCost = COST_ESTIMATES[genModel].generation;
+    const editCost = COST_ESTIMATES[editModel].edit;
+    const estimate: CostEstimate = {
+      model: `${genModel} (gen) + ${editModel} (edit)`,
+      operations: ['generation', 'edit'],
+      estimatedCost: `~$${(genCost + editCost).toFixed(3)}`,
+      note: 'Estimates based on public pricing. Actual costs may vary.',
+    };
+    const confirmed = await confirmCost(estimate);
+    if (!confirmed) {
+      printJson({ cancelled: true });
+      return;
+    }
+  }
 
   const result = await generateWithTransparency(prompt, outputDir, {
-    method: parsed.method,
+    method,
     type,
     imageConfig: buildImageConfig(parsed),
+    filename: parsed.name ? `${parsed.name}.png` : undefined,
   });
 
   printJson(result);
+
+  if (parsed.open) {
+    openFile(result.path);
+  }
 }
 
 async function handleEditTransparent(args: string[]): Promise<void> {
   const parsed = parseArgs(args);
   const outputDir = requireOutputDir(parsed);
   const inputImage = requireInputImage(parsed);
+  const method = parsed.method || 'pro-pro';
+
+  // Cost estimation (2x edit for API methods, free for local)
+  if (parsed.showCost && method !== 'local') {
+    const editModel = method === 'pro-pro' ? 'nano-banana-pro' : 'nano-banana';
+    const editCost = COST_ESTIMATES[editModel].edit * 2; // Two edits (white + black)
+    const estimate: CostEstimate = {
+      model: editModel,
+      operations: ['edit (to white)', 'edit (to black)'],
+      estimatedCost: `~$${editCost.toFixed(3)}`,
+      note: 'Estimates based on public pricing. Actual costs may vary.',
+    };
+    const confirmed = await confirmCost(estimate);
+    if (!confirmed) {
+      printJson({ cancelled: true });
+      return;
+    }
+  }
 
   const result = await extractTransparencyFromImage(inputImage, outputDir, {
-    method: parsed.method,
+    method,
     imageConfig: buildImageConfig(parsed),
     bgColor: parsed.bgColor,
     tolerance: parsed.tolerance,
+    filename: parsed.name ? `${parsed.name}.png` : undefined,
   });
 
   printJson(result);
+
+  if (parsed.open) {
+    openFile(result.path);
+  }
 }
 
 async function main(): Promise<void> {

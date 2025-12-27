@@ -128,6 +128,9 @@ terminal-banana generate -o ./output --resolution 4K --aspect-ratio 21:9 "epic p
 | `--method <m>` | Transparency method: `pro-pro`, `pro-flash`, `flash-flash` |
 | `--resolution <r>` | Image size: `1K` (default), `2K`, `4K` (pro only) |
 | `--aspect-ratio <ar>` | Aspect ratio: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, etc. |
+| `--name <filename>` | Custom output filename (without extension) |
+| `--open` | Open generated image in default viewer |
+| `--cost` | Show estimated cost and confirm before generating |
 
 ## Models
 
