@@ -4,7 +4,8 @@
   "description": "CLI tool for image generation using Nano Banana (Gemini Image) APIs",
   "type": "module",
   "bin": {
-    "terminal-banana": "./dist/cli.js"
+    "terminal-banana": "./dist/cli.js",
+    "tbanana": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc",

@@ -24,6 +24,31 @@ function getClient(): GoogleGenAI {
   return new GoogleGenAI({ apiKey });
 }
 
+/**
+ * Detect image mime type from buffer magic bytes
+ */
+function detectMimeType(buffer: Buffer): string {
+  // Check PNG signature: 89 50 4E 47 0D 0A 1A 0A
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+    return 'image/png';
+  }
+  // Check JPEG signature: FF D8 FF
+  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+    return 'image/jpeg';
+  }
+  // Check GIF signature: 47 49 46 38
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) {
+    return 'image/gif';
+  }
+  // Check WebP signature: 52 49 46 46 ... 57 45 42 50
+  if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+      buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
+    return 'image/webp';
+  }
+  // Default to PNG if unknown
+  return 'image/png';
+}
+
 export async function generateImage(
   prompt: string,
   model: Model = 'nano-banana-pro',
@@ -40,7 +65,7 @@ export async function generateImage(
     for (const imgBuffer of referenceImages) {
       contents.push({
         inlineData: {
-          mimeType: 'image/png',
+          mimeType: detectMimeType(imgBuffer),
           data: imgBuffer.toString('base64'),
         },
       });
@@ -83,7 +108,7 @@ export async function editImage(
   const contents = [
     {
       inlineData: {
-        mimeType: 'image/png',
+        mimeType: detectMimeType(imageBuffer),
         data: imageBuffer.toString('base64'),
       },
     },

@@ -2,6 +2,15 @@
 
 CLI tool for AI image generation using Nano Banana (Gemini Image) APIs.
 
+> **Tip:** Use `tbanana` as a shorter alias for `terminal-banana`
+
+## Examples
+
+| Icon Generation | Transparent Smoke (with alpha channel) |
+|-----------------|----------------------------------------|
+| ![Banana Icon](docs/examples/banana-icon.png) | ![Ethereal Smoke](docs/examples/ethereal-smoke.png) |
+| `tbanana icon -o ./out "a banana"` | `tbanana transparent -o ./out "ethereal smoke wisps"` |
+
 ## Features
 
 - **Image Generation** - Generate images, icons, logos, and UI concepts
@@ -22,7 +31,7 @@ CLI tool for AI image generation using Nano Banana (Gemini Image) APIs.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/terminal-banana.git
+git clone https://github.com/ETM-Code/terminal-banana.git
 cd terminal-banana
 
 # Install dependencies

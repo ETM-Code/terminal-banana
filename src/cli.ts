@@ -4,8 +4,9 @@
  * terminal-banana CLI - Image generation using Nano Banana (Gemini Image) APIs
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { platform } from 'os';
+import { basename } from 'path';
 import * as readline from 'readline';
 import {
   loadConfig,
@@ -31,8 +32,13 @@ function printJson(data: unknown): void {
 
 function openFile(filePath: string): void {
   const plat = platform();
-  const cmd = plat === 'darwin' ? 'open' : plat === 'win32' ? 'start' : 'xdg-open';
-  exec(`${cmd} "${filePath}"`);
+  if (plat === 'darwin') {
+    execFile('open', [filePath]);
+  } else if (plat === 'win32') {
+    execFile('cmd', ['/c', 'start', '', filePath]);
+  } else {
+    execFile('xdg-open', [filePath]);
+  }
 }
 
 // Estimated costs per image (approximate, based on public pricing)
@@ -152,10 +158,18 @@ interface ParsedArgs {
 const VALID_ASPECT_RATIOS: AspectRatio[] = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
 const VALID_RESOLUTIONS: ImageSize[] = ['1K', '2K', '4K'];
 
+const VALID_FLAGS = new Set([
+  '-o', '-i', '-r', '--method', '--bg-color', '--tolerance',
+  '--model', '--resolution', '--aspect-ratio', '--name', '--open', '--cost'
+]);
+
+const MAX_REFERENCE_IMAGES = 14;
+
 function parseArgs(args: string[]): ParsedArgs {
   const result: ParsedArgs = {};
   const promptParts: string[] = [];
   const refImages: string[] = [];
+  const unknownFlags: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -170,38 +184,56 @@ function parseArgs(args: string[]): ParsedArgs {
       const method = args[++i];
       if (method === 'pro-pro' || method === 'pro-flash' || method === 'flash-flash' || method === 'local') {
         result.method = method;
+      } else {
+        printError(`Invalid method: ${method}. Valid options: pro-pro, pro-flash, flash-flash, local`);
       }
     } else if (arg === '--bg-color' && args[i + 1]) {
       result.bgColor = args[++i] as BackgroundColor;
     } else if (arg === '--tolerance' && args[i + 1]) {
       const tol = parseInt(args[++i], 10);
-      if (!isNaN(tol) && tol >= 0 && tol <= 255) {
-        result.tolerance = tol;
+      if (isNaN(tol) || tol < 0 || tol > 255) {
+        printError(`Invalid tolerance: must be 0-255`);
       }
+      result.tolerance = tol;
     } else if (arg === '--model' && args[i + 1]) {
       const model = args[++i];
       if (model === 'nano-banana' || model === 'nano-banana-pro') {
         result.model = model;
+      } else {
+        printError(`Invalid model: ${model}. Valid options: nano-banana, nano-banana-pro`);
       }
     } else if (arg === '--resolution' && args[i + 1]) {
       const res = args[++i] as ImageSize;
       if (VALID_RESOLUTIONS.includes(res)) {
         result.resolution = res;
+      } else {
+        printError(`Invalid resolution: ${res}. Valid options: ${VALID_RESOLUTIONS.join(', ')}`);
       }
     } else if (arg === '--aspect-ratio' && args[i + 1]) {
       const ar = args[++i] as AspectRatio;
       if (VALID_ASPECT_RATIOS.includes(ar)) {
         result.aspectRatio = ar;
+      } else {
+        printError(`Invalid aspect ratio: ${ar}. Valid options: ${VALID_ASPECT_RATIOS.join(', ')}`);
       }
     } else if (arg === '--name' && args[i + 1]) {
-      result.name = args[++i];
+      // Sanitize filename to prevent directory traversal
+      result.name = basename(args[++i]);
     } else if (arg === '--open') {
       result.open = true;
     } else if (arg === '--cost') {
       result.showCost = true;
-    } else if (!arg.startsWith('-')) {
+    } else if (arg.startsWith('-')) {
+      // Unknown flag
+      unknownFlags.push(arg);
+    } else {
       promptParts.push(arg);
     }
+  }
+
+  // Warn about unknown flags
+  if (unknownFlags.length > 0) {
+    printError(`Unknown flag(s): ${unknownFlags.join(', ')}. Use --help for usage.`);
   }
 
   if (promptParts.length > 0) {
@@ -209,6 +241,9 @@ function parseArgs(args: string[]): ParsedArgs {
   }
 
   if (refImages.length > 0) {
+    if (refImages.length > MAX_REFERENCE_IMAGES) {
+      printError(`Too many reference images: ${refImages.length}. Maximum is ${MAX_REFERENCE_IMAGES}`);
+    }
     result.referenceImages = refImages;
   }
 
@@ -364,6 +399,11 @@ async function handleTransparent(
   const outputDir = requireOutputDir(parsed);
   const prompt = requirePrompt(parsed);
   const method = parsed.method || 'pro-pro';
+
+  // Reject local method for transparent generation - it only works for edit-transparent
+  if (method === 'local') {
+    printError('--method local is only valid for edit-transparent (background removal from existing images). Use pro-pro, pro-flash, or flash-flash for transparent generation.');
+  }
 
   // Cost estimation (generation + edit for transparency)
   if (parsed.showCost) {

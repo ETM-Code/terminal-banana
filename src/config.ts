@@ -61,7 +61,12 @@ export function maskApiKey(key: string): string {
 }
 
 export async function promptForApiKey(): Promise<string> {
-  return new Promise((resolve) => {
+  // Check if stdin is a TTY
+  if (!process.stdin.isTTY) {
+    throw new Error('Cannot prompt for API key: stdin is not a TTY. Please run interactively or set API key via config file.');
+  }
+
+  return new Promise((resolve, reject) => {
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -71,20 +76,41 @@ export async function promptForApiKey(): Promise<string> {
     process.stdout.write('Enter your Gemini API key: ');
 
     let input = '';
+    let rawModeSet = false;
 
-    process.stdin.setRawMode(true);
+    const cleanup = () => {
+      if (rawModeSet && process.stdin.isTTY) {
+        try {
+          process.stdin.setRawMode(false);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+      process.stdin.removeListener('data', onData);
+      rl.close();
+    };
+
+    try {
+      process.stdin.setRawMode(true);
+      rawModeSet = true;
+    } catch (err) {
+      cleanup();
+      reject(new Error('Cannot set raw mode on stdin'));
+      return;
+    }
+
     process.stdin.resume();
     process.stdin.setEncoding('utf8');
 
     const onData = (char: string) => {
       if (char === '\n' || char === '\r') {
-        process.stdin.setRawMode(false);
-        process.stdin.removeListener('data', onData);
+        cleanup();
         process.stdout.write('\n');
-        rl.close();
         resolve(input);
       } else if (char === '\u0003') {
         // Ctrl+C
+        cleanup();
+        process.stdout.write('\n');
         process.exit(1);
       } else if (char === '\u007F' || char === '\b') {
         // Backspace
@@ -94,7 +120,8 @@ export async function promptForApiKey(): Promise<string> {
           process.stdout.cursorTo(0);
           process.stdout.write('Enter your Gemini API key: ' + '*'.repeat(input.length));
         }
-      } else {
+      } else if (char >= ' ') {
+        // Only accept printable characters
         input += char;
         process.stdout.write('*');
       }

@@ -2,9 +2,12 @@
  * Image generation and editing operations
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join, resolve, basename } from 'path';
 import { generateImage, editImage, Model, ImageConfig } from './gemini.js';
+import { ImageType, ensureDir, wrapPromptForType, generateFilename } from './utils.js';
+
+export { ImageType };
 
 export function loadReferenceImages(paths: string[]): Buffer[] {
   const buffers: Buffer[] = [];
@@ -15,37 +18,6 @@ export function loadReferenceImages(paths: string[]): Buffer[] {
     buffers.push(readFileSync(p));
   }
   return buffers;
-}
-import {
-  wrapIconPrompt,
-  wrapLogoPrompt,
-  wrapUIPrompt,
-} from './prompts.js';
-
-export type ImageType = 'image' | 'icon' | 'logo' | 'ui';
-
-function ensureDir(dir: string): void {
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-}
-
-function generateFilename(prefix: string = 'image'): string {
-  const timestamp = Date.now();
-  return `${prefix}_${timestamp}.png`;
-}
-
-function wrapPromptForType(prompt: string, type: ImageType): string {
-  switch (type) {
-    case 'icon':
-      return wrapIconPrompt(prompt);
-    case 'logo':
-      return wrapLogoPrompt(prompt);
-    case 'ui':
-      return wrapUIPrompt(prompt);
-    default:
-      return prompt;
-  }
 }
 
 export interface GenerateResult {

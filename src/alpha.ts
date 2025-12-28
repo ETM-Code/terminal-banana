@@ -3,7 +3,7 @@
  */
 
 import sharp from 'sharp';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join, resolve, basename } from 'path';
 import { generateImage, editImage, Model, ImageConfig } from './gemini.js';
 import {
@@ -11,20 +11,12 @@ import {
   EDIT_TO_BLACK_PROMPT,
   REMOVE_BG_TO_WHITE_PROMPT,
   REMOVE_BG_TO_BLACK_PROMPT,
-  wrapIconPrompt,
-  wrapLogoPrompt,
-  wrapUIPrompt,
 } from './prompts.js';
+import { ImageType, ensureDir, wrapPromptForType } from './utils.js';
 
 export type TransparentMethod = 'pro-pro' | 'pro-flash' | 'flash-flash' | 'local';
 
-export type ImageType = 'image' | 'icon' | 'logo' | 'ui';
-
-function ensureDir(dir: string): void {
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-}
+export { ImageType };
 
 function getModelsForMethod(method: TransparentMethod): { generate: Model; edit: Model } {
   switch (method) {
@@ -40,19 +32,6 @@ function getModelsForMethod(method: TransparentMethod): { generate: Model; edit:
   }
 }
 
-function wrapPromptForType(prompt: string, type: ImageType): string {
-  switch (type) {
-    case 'icon':
-      return wrapIconPrompt(prompt);
-    case 'logo':
-      return wrapLogoPrompt(prompt);
-    case 'ui':
-      return wrapUIPrompt(prompt);
-    default:
-      return prompt;
-  }
-}
-
 export type BackgroundColor = 'white' | 'black' | 'auto' | string; // string for hex like '#00ff00'
 
 function parseColor(color: string): { r: number; g: number; b: number } {
@@ -60,11 +39,13 @@ function parseColor(color: string): { r: number; g: number; b: number } {
   if (color === 'black') return { r: 0, g: 0, b: 0 };
   // Parse hex color
   const hex = color.replace('#', '');
-  return {
-    r: parseInt(hex.slice(0, 2), 16),
-    g: parseInt(hex.slice(2, 4), 16),
-    b: parseInt(hex.slice(4, 6), 16),
-  };
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
+    throw new Error(`Invalid hex color: ${color}. Use format #RRGGBB or RRGGBB`);
+  }
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  return { r, g, b };
 }
 
 /**
@@ -80,6 +61,8 @@ export async function removeBackgroundLocal(
   } = {}
 ): Promise<void> {
   const tolerance = options.tolerance ?? 30;
+  const toleranceSquared = tolerance * tolerance;
+  const doubleToleranceSquared = (tolerance * 2) * (tolerance * 2);
 
   const { data, info } = await sharp(inputPath)
     .ensureAlpha()
@@ -111,40 +94,38 @@ export async function removeBackgroundLocal(
     bgColor = parseColor(options.bgColor);
   }
 
-  const outputBuffer = Buffer.alloc(data.length);
-
-  for (let i = 0; i < info.width * info.height; i++) {
+  // Mutate buffer in-place since we own it
+  const pixelCount = info.width * info.height;
+  for (let i = 0; i < pixelCount; i++) {
     const offset = i * 4;
     const r = data[offset];
     const g = data[offset + 1];
     const b = data[offset + 2];
 
-    // Calculate color distance from background
-    const dist = Math.sqrt(
-      Math.pow(r - bgColor.r, 2) +
-      Math.pow(g - bgColor.g, 2) +
-      Math.pow(b - bgColor.b, 2)
-    );
+    // Calculate squared color distance from background (avoid sqrt for threshold checks)
+    const dr = r - bgColor.r;
+    const dg = g - bgColor.g;
+    const db = b - bgColor.b;
+    const distSquared = dr * dr + dg * dg + db * db;
 
     // Calculate alpha based on distance from background color
     // Pixels similar to background become transparent
     let alpha: number;
-    if (dist <= tolerance) {
+    if (distSquared <= toleranceSquared) {
       alpha = 0; // Fully transparent
-    } else if (dist <= tolerance * 2) {
-      // Gradual fade for anti-aliasing
+    } else if (distSquared <= doubleToleranceSquared) {
+      // Gradual fade for anti-aliasing - need actual distance here
+      const dist = Math.sqrt(distSquared);
       alpha = (dist - tolerance) / tolerance;
     } else {
       alpha = 1; // Fully opaque
     }
 
-    outputBuffer[offset] = r;
-    outputBuffer[offset + 1] = g;
-    outputBuffer[offset + 2] = b;
-    outputBuffer[offset + 3] = Math.round(alpha * 255);
+    // RGB stays the same, just update alpha
+    data[offset + 3] = Math.round(alpha * 255);
   }
 
-  await sharp(outputBuffer, {
+  await sharp(data, {
     raw: { width: info.width, height: info.height, channels: 4 },
   })
     .png()
@@ -183,7 +164,8 @@ export async function extractAlphaTwoPass(
   // sqrt(255^2 + 255^2 + 255^2) ≈ 441.67
   const bgDist = Math.sqrt(3 * 255 * 255);
 
-  for (let i = 0; i < meta.width * meta.height; i++) {
+  const pixelCount = meta.width * meta.height;
+  for (let i = 0; i < pixelCount; i++) {
     const offset = i * 4;
 
     // Get RGB values for the same pixel in both images
@@ -196,16 +178,18 @@ export async function extractAlphaTwoPass(
     const bB = dataBlack[offset + 2];
 
     // Calculate the distance between the two observed pixels
-    const pixelDist = Math.sqrt(
-      Math.pow(rW - rB, 2) + Math.pow(gW - gB, 2) + Math.pow(bW - bB, 2)
-    );
+    const drWB = rW - rB;
+    const dgWB = gW - gB;
+    const dbWB = bW - bB;
+    const pixelDist = Math.sqrt(drWB * drWB + dgWB * dgWB + dbWB * dbWB);
 
     // If the pixel is 100% opaque, it looks the same on Black and White (pixelDist = 0).
     // If the pixel is 100% transparent, it looks exactly like the backgrounds (pixelDist = bgDist).
     let alpha = 1 - pixelDist / bgDist;
 
     // Clamp results to 0-1 range
-    alpha = Math.max(0, Math.min(1, alpha));
+    if (alpha < 0) alpha = 0;
+    if (alpha > 1) alpha = 1;
 
     // Color Recovery:
     // Use the image on black to recover the color, dividing by alpha
