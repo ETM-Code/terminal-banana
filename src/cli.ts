@@ -424,11 +424,17 @@ async function handleTransparent(
     }
   }
 
+  // Load reference images if provided
+  const referenceImages = parsed.referenceImages
+    ? loadReferenceImages(parsed.referenceImages)
+    : undefined;
+
   const result = await generateWithTransparency(prompt, outputDir, {
     method,
     type,
     imageConfig: buildImageConfig(parsed),
     filename: parsed.name ? `${parsed.name}.png` : undefined,
+    referenceImages,
   });
 
   printJson(result);

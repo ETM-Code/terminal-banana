@@ -6,10 +6,10 @@ CLI tool for AI image generation using Nano Banana (Gemini Image) APIs.
 
 ## Examples
 
-| Icon Generation | Transparent Smoke (with alpha channel) |
-|-----------------|----------------------------------------|
-| ![Banana Icon](docs/examples/banana-icon.png) | ![Ethereal Smoke](docs/examples/ethereal-smoke.png) |
-| `tbanana icon -o ./out "a banana"` | `tbanana transparent -o ./out "ethereal smoke wisps"` |
+| Icon Generation | Transparent Smoke | Reference Image Generation |
+|-----------------|-------------------|---------------------------|
+| ![Banana Icon](docs/examples/banana-icon.png) | ![Ethereal Smoke](docs/examples/ethereal-smoke.png) | ![Claude Shoggoth](docs/examples/claude-shoggoth.png) |
+| `tbanana icon -o ./out "a banana"` | `tbanana transparent -o ./out "ethereal smoke"` | `tbanana transparent -r ref1.jpg -r ref2.jpg -o ./out "prompt"` |
 
 ## Features
 

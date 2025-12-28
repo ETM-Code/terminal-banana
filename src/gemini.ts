@@ -58,9 +58,13 @@ export async function generateImage(
   const client = getClient();
 
   // Build contents array with optional reference images
+  // Order: text prompt first, then images (per Gemini API docs)
   const contents: any[] = [];
 
-  // Add reference images first (if any)
+  // Add the text prompt first
+  contents.push({ text: prompt });
+
+  // Add reference images after the prompt
   if (referenceImages && referenceImages.length > 0) {
     for (const imgBuffer of referenceImages) {
       contents.push({
@@ -71,9 +75,6 @@ export async function generateImage(
       });
     }
   }
-
-  // Add the text prompt
-  contents.push({ text: prompt });
 
   const response = await client.models.generateContent({
     model: MODELS[model],

@@ -240,6 +240,7 @@ export async function generateWithTransparency(
     filename?: string;
     type?: ImageType;
     imageConfig?: ImageConfig;
+    referenceImages?: Buffer[];
   } = {}
 ): Promise<TransparentResult> {
   const method = options.method || 'pro-pro';
@@ -253,7 +254,7 @@ export async function generateWithTransparency(
   const whitePrompt = appendWhiteBackground(wrappedPrompt);
 
   // Step 1: Generate on white background
-  const whiteBuffer = await generateImage(whitePrompt, genModel, options.imageConfig);
+  const whiteBuffer = await generateImage(whitePrompt, genModel, options.imageConfig, options.referenceImages);
   const timestamp = Date.now();
   const whitePath = resolve(join(outputDir, `_white_${timestamp}.png`));
   writeFileSync(whitePath, whiteBuffer);
